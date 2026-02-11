@@ -1,0 +1,15 @@
+{
+  "name": "kelajak-mediklari",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "start": "pnpm --filter @km/web start",
+    "lint": "pnpm -r lint",
+    "db:generate": "pnpm --filter @km/db prisma:generate",
+    "db:migrate": "pnpm --filter @km/db prisma:migrate",
+    "db:seed": "pnpm --filter @km/db db:seed"
+  }
+}

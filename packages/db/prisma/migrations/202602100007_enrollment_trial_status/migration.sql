@@ -1,0 +1,6 @@
+DO $$
+BEGIN
+  ALTER TYPE "EnrollmentStatus" ADD VALUE IF NOT EXISTS 'TRIAL';
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;

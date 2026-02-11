@@ -1,0 +1,445 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  CURATOR
+  STUDENT
+}
+
+enum GroupStudentStatus {
+  ACTIVE
+  PAUSED
+  STOPPED
+}
+
+enum StudentStatus {
+  ACTIVE
+  PAUSED
+  BLOCKED
+}
+
+enum Subjects {
+  CHEMISTRY
+  BIOLOGY
+  BOTH
+}
+
+enum PersonType {
+  GRADE_6
+  GRADE_7
+  GRADE_8
+  GRADE_9
+  GRADE_10
+  GRADE_11
+  COURSE_1
+  COURSE_2
+  ABITURIYENT
+  TALABA
+  OQITUVCHI
+}
+
+enum AvailabilityDays {
+  DU_CHOR_JU
+  SE_PAY_SHAN
+  FARQI_YOQ
+}
+
+enum GroupCatalogStatus {
+  REJADA
+  OCHIQ
+  BOSHLANGAN
+  YOPIQ
+}
+
+enum GroupCatalogFormat {
+  ONLINE
+  OFFLINE
+}
+
+enum EnrollmentStatus {
+  TRIAL
+  ACTIVE
+  PAUSED
+  LEFT
+}
+
+enum PaymentMethod {
+  CASH
+  PAYME
+  CLICK
+  BANK
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+  DEBT
+}
+
+enum CuratorWorkDays {
+  DU_CHOR_JU
+  SE_PAY_SHAN
+  HAR_KUNI
+}
+
+enum AppealSenderType {
+  STUDENT
+  PARENT
+}
+
+enum AppealStatus {
+  OPEN
+  RESOLVED
+}
+
+enum JournalAttendance {
+  PRESENT
+  ABSENT
+  EXCUSED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  SUBMIT
+}
+
+model User {
+  id             String          @id @default(cuid())
+  role           Role
+  phone          String?         @unique
+  username       String?         @unique
+  passwordHash   String?
+  telegramUserId String?         @unique
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+
+  curatorProfile CuratorProfile?
+  curatorGroups  Group[]         @relation("CuratorGroups")
+  studentGroups  GroupStudent[]  @relation("StudentGroups")
+  accessWindows  AccessWindow[]  @relation("StudentAccess")
+  submissions    Submission[]    @relation("StudentSubmissions")
+  studentProfile Student?
+  catalogGroups  GroupCatalog[]  @relation("CatalogCurator")
+
+  createdAccessWindows AccessWindow[] @relation("CreatedByCurator")
+  auditLogs           AuditLog[]      @relation("ActorLogs")
+  resolvedAppeals     Appeal[]        @relation("ResolvedByAdmin")
+}
+
+model CuratorProfile {
+  userId       String  @id
+  fullName     String
+  isSuspended  Boolean @default(false)
+  workStart    String?
+  workEnd      String?
+  workDays     CuratorWorkDays @default(HAR_KUNI)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Group {
+  id           String   @id @default(cuid())
+  curatorId    String
+  name         String
+  subject      String
+  scheduleText String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  curator  User           @relation("CuratorGroups", fields: [curatorId], references: [id], onDelete: Restrict)
+  students GroupStudent[]
+
+  @@index([curatorId])
+}
+
+model GroupStudent {
+  groupId    String
+  studentId  String
+  status     GroupStudentStatus @default(ACTIVE)
+  joinedAt   DateTime           @default(now())
+
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  student User  @relation("StudentGroups", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, studentId])
+  @@index([studentId])
+}
+
+model Student {
+  id          String        @id @default(uuid())
+  fullName    String
+  phone       String        @unique
+  parentPhone String?
+  status      StudentStatus @default(ACTIVE)
+  subjects    Subjects?
+  chemistryLevel Int?
+  biologyLevel   Int?
+  personType  PersonType?
+  availabilityDays AvailabilityDays?
+  availabilityTime String?
+  note        String?
+  userId      String?       @unique
+  createdAt   DateTime      @default(now())
+
+  user        User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  enrollments Enrollment[]
+  payments    Payment[]
+  journalEntries GroupJournalEntry[]
+  appeals     Appeal[]
+
+  @@index([phone, status])
+}
+
+model GroupCatalog {
+  id           String             @id @default(uuid())
+  code         String             @unique
+  fan          String
+  scheduleText String
+  days         String?
+  time         String?
+  format       GroupCatalogFormat @default(ONLINE)
+  capacity     Int
+  priceMonthly Int
+  status       GroupCatalogStatus @default(REJADA)
+  curatorId    String?
+  createdAt    DateTime           @default(now())
+
+  curator     User?        @relation("CatalogCurator", fields: [curatorId], references: [id], onDelete: SetNull)
+  enrollments Enrollment[]
+  payments    Payment[]
+  journalDates GroupJournalDate[]
+
+  @@index([curatorId, status])
+}
+
+model Enrollment {
+  id        String           @id @default(uuid())
+  studentId String
+  groupId   String
+  status    EnrollmentStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+
+  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  group   GroupCatalog @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, groupId])
+  @@index([groupId, status])
+  @@index([studentId, status])
+}
+
+model GroupJournalDate {
+  id          String   @id @default(uuid())
+  groupId      String
+  journalDate  DateTime
+  monthKey     String
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  group    GroupCatalog       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  entries  GroupJournalEntry[]
+
+  @@unique([groupId, journalDate])
+  @@index([groupId, monthKey, journalDate])
+}
+
+model GroupJournalEntry {
+  id               String            @id @default(uuid())
+  journalDateId    String
+  studentId        String
+  attendance       JournalAttendance @default(PRESENT)
+  lessonId         String?
+  theoryScore      Int?
+  practicalScore   Int?
+  createdById      String?
+  updatedById      String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  journalDate GroupJournalDate @relation(fields: [journalDateId], references: [id], onDelete: Cascade)
+  student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson      Lesson?          @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+
+  @@unique([journalDateId, studentId])
+  @@index([studentId, journalDateId])
+}
+
+model Book {
+  id        String   @id @default(cuid())
+  title     String
+  createdAt DateTime @default(now())
+
+  lessons Lesson[]
+}
+
+model Lesson {
+  id           String   @id @default(cuid())
+  bookId       String
+  lessonNumber Int
+  title        String
+  createdAt    DateTime @default(now())
+
+  book  Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  tests Test[]
+  journalEntries GroupJournalEntry[]
+
+  @@unique([bookId, lessonNumber])
+}
+
+model Test {
+  id             String   @id @default(cuid())
+  lessonId        String
+  answerKey       Json
+  totalQuestions  Int
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  lesson         Lesson            @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  images         TestImage[]
+  accessWindows  AccessWindow[]
+  submissions    Submission[]
+
+  @@index([lessonId, isActive])
+}
+
+model TestImage {
+  id        String @id @default(cuid())
+  testId     String
+  imageUrl   String
+  pageNumber Int
+
+  test Test @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  @@unique([testId, pageNumber])
+}
+
+model AccessWindow {
+  id         String   @id @default(cuid())
+  studentId  String
+  testId     String
+  openFrom   DateTime
+  openTo     DateTime
+  createdBy  String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  student User @relation("StudentAccess", fields: [studentId], references: [id], onDelete: Cascade)
+  test    Test @relation(fields: [testId], references: [id], onDelete: Cascade)
+  creator User @relation("CreatedByCurator", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([studentId, isActive, openFrom, openTo])
+  @@index([testId])
+}
+
+model Submission {
+  id             String   @id @default(cuid())
+  studentId      String
+  testId         String
+  rawAnswerText  String
+  parsedAnswers  Json
+  score          Int
+  createdAt      DateTime @default(now())
+
+  student User @relation("StudentSubmissions", fields: [studentId], references: [id], onDelete: Cascade)
+  test    Test @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  details SubmissionDetail[]
+
+  @@index([studentId, createdAt])
+  @@index([testId, createdAt])
+}
+
+model SubmissionDetail {
+  id             String @id @default(cuid())
+  submissionId   String
+  questionNumber Int
+  givenAnswer    String?
+  correctAnswer  String
+  isCorrect      Boolean
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, questionNumber])
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  actorId     String?
+  action      AuditAction
+  entity      String
+  entityId    String
+  payload     Json?
+  createdAt   DateTime    @default(now())
+
+  actor User? @relation("ActorLogs", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  studentId      String
+  groupId        String?
+  subject        Subjects
+  month          String
+  periodStart    DateTime?
+  periodEnd      DateTime?
+  amountRequired Int
+  amountPaid     Int
+  discount       Int           @default(0)
+  paymentMethod  PaymentMethod
+  status         PaymentStatus
+  isDeleted      Boolean       @default(false)
+  deletedAt      DateTime?
+  deletedById    String?
+  paidAt         DateTime      @default(now())
+  note           String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  group   GroupCatalog? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  @@index([studentId, month])
+  @@index([month, status])
+  @@index([subject, status])
+  @@index([groupId, periodEnd])
+  @@index([isDeleted, month])
+}
+
+model ParentContact {
+  id             String   @id @default(cuid())
+  phone          String   @unique
+  telegramUserId String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Appeal {
+  id                  String           @id @default(uuid())
+  studentId           String
+  senderType          AppealSenderType
+  senderTelegramUserId String
+  senderPhone         String?
+  text                String
+  status              AppealStatus     @default(OPEN)
+  resolvedAt          DateTime?
+  resolvedById        String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  student             Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  resolvedBy          User?            @relation("ResolvedByAdmin", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([studentId, createdAt])
+}
