@@ -22,7 +22,7 @@ type PaymentCreateFormProps = {
   students: StudentOption[];
 };
 
-const METHOD_OPTIONS = ["CASH", "PAYME", "CLICK", "BANK"] as const;
+const METHOD_OPTIONS = ["CASH", "PAYME", "CLICK", "UZUM", "PAYNET", "BANK"] as const;
 
 function normalizePhone(value: string): string {
   const digits = value.replace(/\D/g, "");

@@ -2,6 +2,7 @@ import { EnrollmentStatus, PaymentMethod, PaymentStatus, Subjects } from "@prism
 import { prisma } from "@km/db";
 import { getSession } from "@/lib/auth";
 import { isUzE164, normalizeUzPhone, phoneVariants } from "@/lib/phone";
+import { addOneMonthFromDateInput, buildPeriodNote, parseDateInput } from "@/lib/payment-debt";
 import { NextResponse } from "next/server";
 
 function parseEnrollmentStatus(value: string): EnrollmentStatus {
@@ -48,6 +49,7 @@ async function readInput(req: Request): Promise<Record<string, string>> {
       phone: String(body.phone ?? ""),
       studentId: String(body.studentId ?? ""),
       status: String(body.status ?? "ACTIVE"),
+      studyStartDate: String(body.studyStartDate ?? ""),
       redirectTo: String(body.redirectTo ?? ""),
     };
   }
@@ -58,6 +60,7 @@ async function readInput(req: Request): Promise<Record<string, string>> {
     phone: String(form.get("phone") ?? ""),
     studentId: String(form.get("studentId") ?? ""),
     status: String(form.get("status") ?? "ACTIVE"),
+    studyStartDate: String(form.get("studyStartDate") ?? ""),
     redirectTo: String(form.get("redirectTo") ?? ""),
   };
 }
@@ -73,6 +76,8 @@ export async function POST(req: Request) {
   const studentIdRaw = input.studentId.trim();
   const phone = normalizeUzPhone(input.phone);
   const status = parseEnrollmentStatus(input.status);
+  const studyStartDateRaw = input.studyStartDate.trim();
+  const parsedStudyStartDate = studyStartDateRaw ? parseDateInput(studyStartDateRaw) : null;
   const redirectPath = getRedirectPath(input.redirectTo);
 
   if (!groupId || (!studentIdRaw && !phone)) {
@@ -83,6 +88,11 @@ export async function POST(req: Request) {
   if (!studentIdRaw && !isUzE164(phone)) {
     if (asJson) return NextResponse.json({ ok: false, error: "Telefon +998XXXXXXXXX formatda bo'lishi kerak" }, { status: 400 });
     return redirectAdmin(req, "Telefon +998XXXXXXXXX formatda bo'lishi kerak", true, redirectPath);
+  }
+
+  if (studyStartDateRaw && !parsedStudyStartDate) {
+    if (asJson) return NextResponse.json({ ok: false, error: "Boshlash sanasi YYYY-MM-DD bo'lishi kerak" }, { status: 400 });
+    return redirectAdmin(req, "Boshlash sanasi noto'g'ri", true, redirectPath);
   }
 
   const group = await prisma.groupCatalog.findUnique({ where: { id: groupId } });
@@ -140,11 +150,15 @@ export async function POST(req: Request) {
             groupId: group.id,
           },
         },
-        update: { status },
+        update: {
+          status,
+          ...(parsedStudyStartDate ? { studyStartDate: parsedStudyStartDate } : {}),
+        },
         create: {
           studentId: student.id,
           groupId: group.id,
           status,
+          studyStartDate: parsedStudyStartDate ?? new Date(),
         },
       });
 
@@ -161,20 +175,28 @@ export async function POST(req: Request) {
           });
 
           if (!alreadyHasPayment) {
+            const periodStart = new Date(
+              Date.UTC(
+                (upserted.studyStartDate ?? existingEnrollment.studyStartDate ?? existingEnrollment.createdAt).getUTCFullYear(),
+                (upserted.studyStartDate ?? existingEnrollment.studyStartDate ?? existingEnrollment.createdAt).getUTCMonth(),
+                (upserted.studyStartDate ?? existingEnrollment.studyStartDate ?? existingEnrollment.createdAt).getUTCDate(),
+              ),
+            );
+            const periodEnd = addOneMonthFromDateInput(periodStart);
             await tx.payment.create({
               data: {
                 studentId: student.id,
                 groupId: group.id,
                 subject,
-                month: "UNASSIGNED",
-                periodStart: null,
-                periodEnd: null,
+                month: `${periodStart.getUTCFullYear()}-${String(periodStart.getUTCMonth() + 1).padStart(2, "0")}`,
+                periodStart,
+                periodEnd,
                 amountRequired: group.priceMonthly,
                 amountPaid: 0,
                 discount: 0,
                 paymentMethod: PaymentMethod.CASH,
                 status: PaymentStatus.DEBT,
-                note: "Auto qarzdorlik: SINOV -> AKTIV",
+                note: `Auto qarzdorlik: SINOV -> AKTIV | Davr: ${buildPeriodNote(periodStart, periodEnd)}`,
               },
             });
           }
@@ -191,6 +213,7 @@ export async function POST(req: Request) {
             groupId: group.id,
             studentId: student.id,
             status,
+            studyStartDate: upserted.studyStartDate,
           },
         },
       });

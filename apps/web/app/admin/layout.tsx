@@ -6,6 +6,8 @@ const adminNav = [
   { href: "/admin/students", label: "Students" },
   { href: "/admin/curators", label: "Curators" },
   { href: "/admin/groups", label: "Groups" },
+  { href: "/admin/locations", label: "Locations" },
+  { href: "/admin/locations/excel-import", label: "Excel Import" },
   { href: "/admin/tests", label: "Tests" },
   { href: "/admin/results", label: "Results" },
   { href: "/admin/payments", label: "Payments" },

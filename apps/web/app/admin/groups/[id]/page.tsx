@@ -2,7 +2,7 @@ import Link from "next/link";
 import { EnrollmentStatus } from "@prisma/client";
 import { prisma } from "@km/db";
 import { notFound } from "next/navigation";
-import { calculateTodayAwareDebtMap } from "@/lib/payment-debt";
+import { calculateTodayAwareDebtMap, formatUzDate } from "@/lib/payment-debt";
 import { getCurrentMonthKey, isValidMonthKey } from "@/lib/group-journal";
 import { GroupJournalSection } from "@/components/group-journal-section";
 
@@ -42,6 +42,14 @@ function formatEnrollmentStatus(status: EnrollmentStatus): string {
   if (status === EnrollmentStatus.ACTIVE) return "AKTIV";
   if (status === EnrollmentStatus.PAUSED) return "TO'XTATGAN";
   return "TUGATGAN";
+}
+
+function todayInputValue(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 export default async function AdminGroupDetailPage({
@@ -241,6 +249,16 @@ export default async function AdminGroupDetailPage({
           <input type="hidden" name="groupId" value={group.id} />
           <input type="hidden" name="redirectTo" value={`/admin/groups/${group.id}`} />
           <input name="phone" className="rounded border p-2" placeholder="Student phone +998..." required />
+          <label className="grid gap-1 text-sm text-slate-700">
+            <span>Darsni boshlash sanasi</span>
+            <input
+              name="studyStartDate"
+              type="date"
+              className="rounded border p-2"
+              defaultValue={todayInputValue()}
+              required
+            />
+          </label>
           <select name="status" className="rounded border p-2" defaultValue="TRIAL">
             <option value="TRIAL">SINOV</option>
             <option value="ACTIVE">AKTIV</option>
@@ -301,7 +319,8 @@ export default async function AdminGroupDetailPage({
                         </form>
                       </div>
                       <p className="mt-1 text-[11px] text-slate-600">
-                        Holati: {formatEnrollmentStatus(enrollment.status)}
+                        Holati: {formatEnrollmentStatus(enrollment.status)} | Boshlagan sana:{" "}
+                        {enrollment.studyStartDate ? formatUzDate(enrollment.studyStartDate) : "-"}
                       </p>
                     </td>
                   </tr>

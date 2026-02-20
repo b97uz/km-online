@@ -23,6 +23,7 @@ type StudentActor = {
   userId: string;
   student: {
     id: string;
+    studentCode: string;
     fullName: string;
     phone: string;
     parentPhone: string | null;
@@ -33,6 +34,7 @@ type ParentActor = {
   type: "PARENT";
   student: {
     id: string;
+    studentCode: string;
     userId: string | null;
     fullName: string;
     phone: string;
@@ -428,6 +430,7 @@ async function findEligibleStudentByPhone(phone: string): Promise<{
   student: {
     id: string;
     userId: string | null;
+    studentCode: string;
     fullName: string;
     phone: string;
     parentPhone: string | null;
@@ -462,6 +465,7 @@ async function findEligibleStudentByPhone(phone: string): Promise<{
     select: {
       id: true,
       userId: true,
+      studentCode: true,
       fullName: true,
       phone: true,
       parentPhone: true,
@@ -481,6 +485,7 @@ async function findEligibleStudentByPhone(phone: string): Promise<{
     select: {
       id: true,
       userId: true,
+      studentCode: true,
       fullName: true,
       phone: true,
       parentPhone: true,
@@ -524,6 +529,7 @@ async function resolveActorByTelegramUserId(telegramUserId: number): Promise<Act
         },
         select: {
           id: true,
+          studentCode: true,
           fullName: true,
           phone: true,
           parentPhone: true,
@@ -570,6 +576,7 @@ async function resolveActorByTelegramUserId(telegramUserId: number): Promise<Act
     select: {
       id: true,
       userId: true,
+      studentCode: true,
       fullName: true,
       phone: true,
       parentPhone: true,
@@ -779,9 +786,10 @@ async function showStudentPaymentInfo(ctx: { reply: (...args: any[]) => Promise<
 
   const text =
     `💳 To'lov holati\n\n` +
+    `Student_ID: ${actor.student.studentCode}\n` +
     `Jami qarzdorlik: ${debt.totalDebt.toLocaleString("uz-UZ")} so'm\n` +
     (debt.totalExtra > 0 ? `Shundan kechikkan davrlar uchun: ${debt.totalExtra.toLocaleString("uz-UZ")} so'm\n` : "") +
-    `\nTo'lov qilish uchun administrator: @ceo97\n\n` +
+    `\nTo'lov yo'riqnomasi: Payme/Click/Uzum/Paynet -> To'lov izohiga Student_ID ni yozing.\n\n` +
     (lines.length ? `Yaqin yozuvlar:\n${lines.join("\n\n")}` : "To'lov yozuvlari topilmadi.");
 
   await ctx.reply(text, { reply_markup: studentMenuKeyboard });
@@ -1010,6 +1018,7 @@ bot.on("message:contact", async (ctx) => {
         userId: user.id,
         student: {
           id: found.student.id,
+          studentCode: found.student.studentCode,
           fullName: found.student.fullName,
           phone: found.student.phone,
           parentPhone: found.student.parentPhone,
@@ -1072,6 +1081,7 @@ bot.on("message:contact", async (ctx) => {
       type: "PARENT",
       student: {
         id: found.student.id,
+        studentCode: found.student.studentCode,
         userId: found.student.userId,
         fullName: found.student.fullName,
         phone: found.student.phone,

@@ -1,6 +1,7 @@
 import { EnrollmentStatus, PaymentMethod, PaymentStatus, Subjects } from "@prisma/client";
 import { prisma } from "@km/db";
 import { getSession } from "@/lib/auth";
+import { addOneMonthFromDateInput, buildPeriodNote, parseDateInput } from "@/lib/payment-debt";
 import { NextResponse } from "next/server";
 
 function parseEnrollmentStatus(value: string): EnrollmentStatus {
@@ -38,10 +39,23 @@ function redirectAdmin(req: Request, message: string, isError = false, redirectP
   return NextResponse.redirect(url, 303);
 }
 
-async function patchEnrollment(req: Request, id: string, statusRaw: string, asJson: boolean, redirectTo = "") {
+async function patchEnrollment(
+  req: Request,
+  id: string,
+  statusRaw: string,
+  studyStartDateRaw: string,
+  asJson: boolean,
+  redirectTo = "",
+) {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") return new NextResponse("Forbidden", { status: 403 });
   const redirectPath = getRedirectPath(redirectTo);
+  const parsedStudyStartDate = studyStartDateRaw ? parseDateInput(studyStartDateRaw) : null;
+
+  if (studyStartDateRaw && !parsedStudyStartDate) {
+    if (asJson) return NextResponse.json({ ok: false, error: "Boshlash sanasi YYYY-MM-DD bo'lishi kerak" }, { status: 400 });
+    return redirectAdmin(req, "Boshlash sanasi noto'g'ri", true, redirectPath);
+  }
 
   const enrollment = await prisma.enrollment.findUnique({
     where: { id },
@@ -83,7 +97,10 @@ async function patchEnrollment(req: Request, id: string, statusRaw: string, asJs
 
       const result = await tx.enrollment.update({
         where: { id: enrollment.id },
-        data: { status },
+        data: {
+          status,
+          ...(parsedStudyStartDate ? { studyStartDate: parsedStudyStartDate } : {}),
+        },
       });
 
       if (enrollment.status === EnrollmentStatus.TRIAL && status === EnrollmentStatus.ACTIVE) {
@@ -99,20 +116,29 @@ async function patchEnrollment(req: Request, id: string, statusRaw: string, asJs
           });
 
           if (!alreadyHasPayment) {
+            const periodStartSource = result.studyStartDate ?? enrollment.studyStartDate ?? enrollment.createdAt;
+            const periodStart = new Date(
+              Date.UTC(
+                periodStartSource.getUTCFullYear(),
+                periodStartSource.getUTCMonth(),
+                periodStartSource.getUTCDate(),
+              ),
+            );
+            const periodEnd = addOneMonthFromDateInput(periodStart);
             await tx.payment.create({
               data: {
                 studentId: enrollment.studentId,
                 groupId: enrollment.group.id,
                 subject,
-                month: "UNASSIGNED",
-                periodStart: null,
-                periodEnd: null,
+                month: `${periodStart.getUTCFullYear()}-${String(periodStart.getUTCMonth() + 1).padStart(2, "0")}`,
+                periodStart,
+                periodEnd,
                 amountRequired: enrollment.group.priceMonthly,
                 amountPaid: 0,
                 discount: 0,
                 paymentMethod: PaymentMethod.CASH,
                 status: PaymentStatus.DEBT,
-                note: "Auto qarzdorlik: SINOV -> AKTIV",
+                note: `Auto qarzdorlik: SINOV -> AKTIV | Davr: ${buildPeriodNote(periodStart, periodEnd)}`,
               },
             });
           }
@@ -125,7 +151,7 @@ async function patchEnrollment(req: Request, id: string, statusRaw: string, asJs
           action: "UPDATE",
           entity: "Enrollment",
           entityId: enrollment.id,
-          payload: { status },
+          payload: { status, studyStartDate: result.studyStartDate },
         },
       });
 
@@ -179,8 +205,15 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const data = (await req.json()) as { status?: string; redirectTo?: string };
-  return patchEnrollment(req, id, String(data.status ?? "ACTIVE"), true, String(data.redirectTo ?? ""));
+  const data = (await req.json()) as { status?: string; studyStartDate?: string; redirectTo?: string };
+  return patchEnrollment(
+    req,
+    id,
+    String(data.status ?? "ACTIVE"),
+    String(data.studyStartDate ?? ""),
+    true,
+    String(data.redirectTo ?? ""),
+  );
 }
 
 export async function DELETE(
@@ -204,6 +237,7 @@ export async function POST(
       req,
       id,
       String(form.get("status") ?? "ACTIVE"),
+      String(form.get("studyStartDate") ?? ""),
       false,
       String(form.get("redirectTo") ?? ""),
     );

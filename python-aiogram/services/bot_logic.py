@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote_plus
 
 from aiogram.types import (
     CallbackQuery,
@@ -21,6 +22,7 @@ from services.answer_parser import ParseError, parse_answer_text
 from services.constants import (
     PARENT_BTN_APPEAL,
     PARENT_BTN_DEBT,
+    PARENT_BTN_PAY,
     PARENT_BTN_RESULTS,
     PARENT_BUTTONS,
     REJECT_TEXT,
@@ -191,6 +193,7 @@ class BotLogic:
         now = datetime.utcnow().date()
 
         latest_by_group: dict[str, dict] = {}
+        groups_map: dict[str, dict] = {}
         total_base = 0
 
         for row in rows:
@@ -198,6 +201,20 @@ class BotLogic:
             total_base += base_debt
 
             group_id = row.get("groupId")
+            group_code = row.get("group_code") or "-"
+            if group_id:
+                group_item = groups_map.get(group_id)
+                if not group_item:
+                    group_item = {
+                        "groupId": group_id,
+                        "groupCode": group_code,
+                        "baseDebt": 0,
+                        "extraDebt": 0,
+                        "totalDebt": 0,
+                    }
+                    groups_map[group_id] = group_item
+                group_item["baseDebt"] += base_debt
+
             period_end = row.get("periodEnd")
             if not group_id or not period_end:
                 continue
@@ -207,7 +224,7 @@ class BotLogic:
                 latest_by_group[group_id] = row
 
         total_extra = 0
-        for latest in latest_by_group.values():
+        for group_id, latest in latest_by_group.items():
             group_status = latest.get("group_status")
             group_price = latest.get("group_price")
             period_end = latest.get("periodEnd")
@@ -224,7 +241,12 @@ class BotLogic:
                 periods += 1
                 cursor = add_months_keeping_day(end_date, periods)
 
-            total_extra += periods * int(group_price)
+            extra_debt = periods * int(group_price)
+            total_extra += extra_debt
+
+            group_item = groups_map.get(group_id)
+            if group_item:
+                group_item["extraDebt"] += extra_debt
 
         top_rows: list[dict] = []
         for row in rows[:10]:
@@ -240,12 +262,142 @@ class BotLogic:
                 }
             )
 
+        groups: list[dict] = []
+        for group in groups_map.values():
+            total = int(group["baseDebt"]) + int(group["extraDebt"])
+            if total <= 0:
+                continue
+            group["totalDebt"] = total
+            groups.append(group)
+
+        groups.sort(key=lambda item: item["totalDebt"], reverse=True)
+
         return {
             "totalDebt": total_base + total_extra,
             "totalBase": total_base,
             "totalExtra": total_extra,
             "topRows": top_rows,
+            "groups": groups,
         }
+
+    def _build_debt_summary_text(self, debt: dict, student_code: str) -> str:
+        group_lines = []
+        for idx, group in enumerate(debt.get("groups", []), start=1):
+            group_lines.append(f"{idx}) {group['groupCode']}: {format_money(group['totalDebt'])} so'm")
+
+        lines = []
+        for idx, row in enumerate(debt.get("topRows", []), start=1):
+            lines.append(
+                f"{idx}) {row['month']} | {row['groupCode']}\n"
+                f"Talab: {format_money(row['net'])} | To'langan: {format_money(row['paid'])} | Qarz: {format_money(row['debt'])}"
+            )
+
+        text = (
+            "💳 To'lov holati\n\n"
+            f"Student_ID: {student_code}\n"
+            f"Jami qarzdorlik: {format_money(debt['totalDebt'])} so'm\n"
+            + (f"Shundan kechikkan davrlar uchun: {format_money(debt['totalExtra'])} so'm\n" if debt["totalExtra"] > 0 else "")
+            + (f"\nGuruhlar kesimida:\n" + "\n".join(group_lines) + "\n" if group_lines else "")
+            + "\nTo'lov yo'riqnomasi: Payme/Click/Uzum/Paynet -> To'lov izohiga Student_ID ni yozing.\n\n"
+            + ("Yaqin yozuvlar:\n" + "\n\n".join(lines) if lines else "To'lov yozuvlari topilmadi.")
+        )
+        return text
+
+    @staticmethod
+    def _payment_scope_keyboard(groups: list[dict]) -> InlineKeyboardMarkup:
+        rows = []
+        for group in groups:
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"💳 {group['groupCode']} ({format_money(group['totalDebt'])})",
+                    callback_data=f"pay_scope:g:{group['groupId']}",
+                )
+            ])
+
+        if len(groups) >= 2:
+            rows.append([InlineKeyboardButton(text="💳 To'liq qarzni to'lash", callback_data="pay_scope:a")])
+
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    @staticmethod
+    def _provider_keyboard(scope: str, group_id: str) -> InlineKeyboardMarkup:
+        suffix = "a" if scope == "a" else f"g:{group_id}"
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Payme", callback_data=f"pay_go:PAYME:{suffix}"),
+                    InlineKeyboardButton(text="Click", callback_data=f"pay_go:CLICK:{suffix}"),
+                ],
+                [
+                    InlineKeyboardButton(text="Uzum", callback_data=f"pay_go:UZUM:{suffix}"),
+                    InlineKeyboardButton(text="Paynet", callback_data=f"pay_go:PAYNET:{suffix}"),
+                ],
+            ]
+        )
+
+    def _build_provider_payment_url(self, provider: str, checkout: dict) -> str:
+        callback_url = f"{self.settings.payment_callback_base_url.rstrip('/')}/{provider.lower()}"
+        comment = f"Student_ID:{checkout['studentCode']};checkout:{checkout['id']}"
+
+        replacements = {
+            "checkout_id": checkout["id"],
+            "student_id": checkout["studentCode"],
+            "group_id": checkout.get("groupId") or "",
+            "amount": str(checkout["amount"]),
+            "amount_tiyin": str(int(checkout["amount"]) * 100),
+            "comment": comment,
+            "comment_url": quote_plus(comment),
+            "token": checkout["callbackToken"],
+            "callback_url": callback_url,
+            "callback_url_encoded": quote_plus(callback_url),
+        }
+
+        templates = {
+            "PAYME": self.settings.payme_url_template,
+            "CLICK": self.settings.click_url_template,
+            "UZUM": self.settings.uzum_url_template,
+            "PAYNET": self.settings.paynet_url_template,
+        }
+
+        template = (templates.get(provider) or "").strip()
+        if not template and self.settings.allow_mock_payment_links:
+            template = (
+                f"{self.settings.web_base_url.rstrip('/')}/api/payment-gateway/mock-pay"
+                "?checkoutId={checkout_id}&token={token}&provider="
+                f"{provider}&amount={{amount}}"
+            )
+
+        if not template:
+            return ""
+
+        url = template
+        for key, value in replacements.items():
+            url = url.replace(f"{{{key}}}", value)
+        return url
+    async def _show_payment_options(self, message: Message, actor: dict, is_parent: bool) -> None:
+        debt = await self._student_debt_summary(actor["student"]["id"])
+        student_code = actor["student"].get("studentCode") or "-"
+        summary_text = self._build_debt_summary_text(debt, student_code)
+
+        if debt["totalDebt"] <= 0:
+            await message.answer(
+                "✅ Hozircha qarzdorlik mavjud emas.",
+                reply_markup=parent_menu_keyboard() if is_parent else student_menu_keyboard(),
+            )
+            return
+
+        await message.answer(summary_text, reply_markup=parent_menu_keyboard() if is_parent else student_menu_keyboard())
+        if not debt.get("groups"):
+            await message.answer(
+                "Qarzdorlik yozuvi bor, lekin guruh birikmasi topilmadi. Administratorga murojaat qiling.",
+                reply_markup=parent_menu_keyboard() if is_parent else student_menu_keyboard(),
+            )
+            return
+
+        await message.answer(
+            "Qaysi qarzni to'lamoqchisiz, tanlang:",
+            reply_markup=self._payment_scope_keyboard(debt["groups"]),
+        )
 
     async def _show_student_monthly_results(self, message: Message, actor: dict) -> None:
         now = datetime.now()
@@ -271,32 +423,10 @@ class BotLogic:
         await message.answer(f"📊 Joriy oy natijalari ({month_text})\n\n" + "\n\n".join(lines), reply_markup=student_menu_keyboard())
 
     async def _show_student_payment_info(self, message: Message, actor: dict) -> None:
-        debt = await self._student_debt_summary(actor["student"]["id"])
-
-        lines = []
-        for idx, row in enumerate(debt["topRows"], start=1):
-            lines.append(
-                f"{idx}) {row['month']} | {row['groupCode']}\n"
-                f"Talab: {format_money(row['net'])} | To'langan: {format_money(row['paid'])} | Qarz: {format_money(row['debt'])}"
-            )
-
-        text = (
-            "💳 To'lov holati\n\n"
-            f"Jami qarzdorlik: {format_money(debt['totalDebt'])} so'm\n"
-            + (f"Shundan kechikkan davrlar uchun: {format_money(debt['totalExtra'])} so'm\n" if debt["totalExtra"] > 0 else "")
-            + "\nTo'lov qilish uchun administrator: @ceo97\n\n"
-            + ("Yaqin yozuvlar:\n" + "\n\n".join(lines) if lines else "To'lov yozuvlari topilmadi.")
-        )
-
-        await message.answer(text, reply_markup=student_menu_keyboard())
+        await self._show_payment_options(message, actor, is_parent=False)
 
     async def _show_parent_debt(self, message: Message, actor: dict) -> None:
-        debt = await self._student_debt_summary(actor["student"]["id"])
-        if debt["totalDebt"] > 0:
-            text = f"💸 Farzandingiz uchun qarzdorlik mavjud: {format_money(debt['totalDebt'])} so'm\nBatafsil uchun administrator: @ceo97"
-        else:
-            text = "✅ Hozircha qarzdorlik mavjud emas."
-        await message.answer(text, reply_markup=parent_menu_keyboard())
+        await self._show_payment_options(message, actor, is_parent=True)
 
     async def _show_parent_results(self, message: Message, actor: dict) -> None:
         student = actor["student"]
@@ -563,6 +693,11 @@ class BotLogic:
             await self._show_parent_debt(message, actor)
             return
 
+        if text == PARENT_BTN_PAY:
+            session.awaiting_appeal = False
+            await self._show_parent_debt(message, actor)
+            return
+
         if text == PARENT_BTN_APPEAL:
             session.awaiting_appeal = True
             await message.answer(
@@ -647,4 +782,129 @@ class BotLogic:
             await callback.answer(text, show_alert=True)
             return
 
+        await callback.answer()
+
+    async def handle_payment_scope(self, callback: CallbackQuery) -> None:
+        if not callback.from_user:
+            await callback.answer("Xatolik", show_alert=True)
+            return
+
+        actor = await self.repo.resolve_actor_by_telegram_user_id(callback.from_user.id)
+        if not actor:
+            await callback.answer("Avval /start qiling", show_alert=True)
+            return
+
+        data = callback.data or ""
+        parts = data.split(":")
+        if len(parts) < 2 or parts[0] != "pay_scope":
+            await callback.answer("Noto'g'ri so'rov", show_alert=True)
+            return
+
+        scope = parts[1]
+        group_id = parts[2] if scope == "g" and len(parts) >= 3 else ""
+
+        debt = await self._student_debt_summary(actor["student"]["id"])
+        groups = debt.get("groups", [])
+        if debt["totalDebt"] <= 0 or not groups:
+            await callback.answer("Qarzdorlik topilmadi", show_alert=True)
+            return
+
+        if scope == "g":
+            selected = next((g for g in groups if g["groupId"] == group_id), None)
+            if not selected or selected["totalDebt"] <= 0:
+                await callback.answer("Tanlangan guruh bo'yicha qarz yo'q", show_alert=True)
+                return
+            target_text = f"{selected['groupCode']} guruh qarzi: {format_money(selected['totalDebt'])} so'm"
+        else:
+            scope = "a"
+            group_id = ""
+            target_text = f"To'liq qarz: {format_money(debt['totalDebt'])} so'm"
+
+        if not callback.message:
+            await callback.answer("Xabar topilmadi", show_alert=True)
+            return
+
+        await callback.message.answer(
+            f"{target_text}\nTo'lov tizimini tanlang:",
+            reply_markup=self._provider_keyboard(scope, group_id),
+        )
+        await callback.answer()
+
+    async def handle_payment_provider(self, callback: CallbackQuery) -> None:
+        if not callback.from_user:
+            await callback.answer("Xatolik", show_alert=True)
+            return
+
+        actor = await self.repo.resolve_actor_by_telegram_user_id(callback.from_user.id)
+        if not actor:
+            await callback.answer("Avval /start qiling", show_alert=True)
+            return
+
+        data = callback.data or ""
+        parts = data.split(":")
+        # pay_go:PAYME:a
+        # pay_go:PAYME:g:<groupId>
+        if len(parts) < 3 or parts[0] != "pay_go":
+            await callback.answer("Noto'g'ri so'rov", show_alert=True)
+            return
+
+        provider = parts[1].upper()
+        scope = parts[2]
+        group_id = parts[3] if scope == "g" and len(parts) >= 4 else ""
+
+        if provider not in {"PAYME", "CLICK", "UZUM", "PAYNET"}:
+            await callback.answer("Provider noto'g'ri", show_alert=True)
+            return
+
+        debt = await self._student_debt_summary(actor["student"]["id"])
+        groups = debt.get("groups", [])
+        if debt["totalDebt"] <= 0 or not groups:
+            await callback.answer("Qarzdorlik topilmadi", show_alert=True)
+            return
+
+        if scope == "g":
+            selected = next((g for g in groups if g["groupId"] == group_id), None)
+            if not selected or selected["totalDebt"] <= 0:
+                await callback.answer("Tanlangan guruh bo'yicha qarz yo'q", show_alert=True)
+                return
+            amount = int(selected["totalDebt"])
+            selected_group_id = selected["groupId"]
+            selected_group_code = selected["groupCode"]
+        else:
+            amount = int(debt["totalDebt"])
+            selected_group_id = None
+            selected_group_code = "ALL"
+
+        if amount <= 0:
+            await callback.answer("Qarzdorlik topilmadi", show_alert=True)
+            return
+
+        checkout = await self.repo.create_payment_checkout(
+            student_id=actor["student"]["id"],
+            student_code=actor["student"].get("studentCode") or "-",
+            provider=provider,
+            amount=amount,
+            group_id=selected_group_id,
+            note=f"Bot checkout | source=telegram | scope={selected_group_code}",
+        )
+
+        url = self._build_provider_payment_url(provider, checkout)
+        if not url:
+            await callback.answer("Bu to'lov tizimi hali ulanmagan", show_alert=True)
+            return
+
+        if not callback.message:
+            await callback.answer("Xabar topilmadi", show_alert=True)
+            return
+
+        await callback.message.answer(
+            "To'lovga o'tish uchun quyidagi tugmani bosing:\n"
+            f"Summa: {format_money(amount)} so'm\n"
+            f"Student_ID: {checkout.get('studentCode') or '-'}",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=f"{provider} orqali to'lash", url=url)],
+                ]
+            ),
+        )
         await callback.answer()

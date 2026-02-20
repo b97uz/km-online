@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { StudentStatus, Subjects } from "@prisma/client";
 import { prisma } from "@km/db";
+import { isLocationTableMissingError } from "@/lib/location-table";
 import { StudentCreateForm } from "../student-create-form";
 
 type StudentsPageParams = {
@@ -54,6 +55,13 @@ function formatAvailabilityDays(value: "DU_CHOR_JU" | "SE_PAY_SHAN" | "FARQI_YOQ
   return "-";
 }
 
+function formatInstitutionType(value: "SCHOOL" | "LYCEUM_COLLEGE" | "OTHER" | null) {
+  if (value === "SCHOOL") return "Maktab";
+  if (value === "LYCEUM_COLLEGE") return "Litsey/Kollej";
+  if (value === "OTHER") return "Boshqa";
+  return "-";
+}
+
 function parseStatusFilter(value: string): StudentStatus | null {
   if (value === "ACTIVE") return StudentStatus.ACTIVE;
   if (value === "PASSIVE") return StudentStatus.PAUSED;
@@ -82,39 +90,112 @@ export default async function AdminStudentsPage({
   const status = parseStatusFilter(statusFilter);
   const subject = parseSubjectFilter(subjectFilter);
 
-  const students = await prisma.student.findMany({
-    where: {
-      ...(phoneFilter
-        ? {
-            OR: [{ phone: { contains: phoneFilter } }, ...(phoneDigits ? [{ phone: { contains: phoneDigits } }] : [])],
-          }
-        : {}),
-      ...(status ? { status } : {}),
-      ...(subject
-        ? {
-            subjects: {
-              in: subject === "CHEMISTRY" ? [Subjects.CHEMISTRY, Subjects.BOTH] : [Subjects.BIOLOGY, Subjects.BOTH],
-            },
-          }
-        : {}),
-    },
-    include: {
-      enrollments: {
+  let students: Array<any> = [];
+  let provinces: { id: string; name: string }[] = [];
+  let districts: { id: string; name: string; provinceId: string }[] = [];
+  let institutions: { id: string; name: string; districtId: string; type: "SCHOOL" | "LYCEUM_COLLEGE" }[] = [];
+  let locationTableMissing = false;
+
+  try {
+    [students, provinces, districts, institutions] = await Promise.all([
+      prisma.student.findMany({
+        where: {
+          ...(phoneFilter
+            ? {
+                OR: [{ phone: { contains: phoneFilter } }, ...(phoneDigits ? [{ phone: { contains: phoneDigits } }] : [])],
+              }
+            : {}),
+          ...(status ? { status } : {}),
+          ...(subject
+            ? {
+                subjects: {
+                  in: subject === "CHEMISTRY" ? [Subjects.CHEMISTRY, Subjects.BOTH] : [Subjects.BIOLOGY, Subjects.BOTH],
+                },
+              }
+            : {}),
+        },
         include: {
-          group: {
-            select: {
-              id: true,
-              code: true,
-              fan: true,
+          province: {
+            select: { id: true, name: true },
+          },
+          district: {
+            select: { id: true, name: true, provinceId: true },
+          },
+          institution: {
+            select: { id: true, name: true, districtId: true, type: true },
+          },
+          enrollments: {
+            include: {
+              group: {
+                select: {
+                  id: true,
+                  code: true,
+                  fan: true,
+                },
+              },
             },
+            orderBy: { createdAt: "desc" },
           },
         },
         orderBy: { createdAt: "desc" },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 300,
-  });
+        take: 300,
+      }),
+      prisma.province.findMany({
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+        take: 300,
+      }),
+      prisma.district.findMany({
+        select: { id: true, name: true, provinceId: true },
+        orderBy: [{ province: { name: "asc" } }, { name: "asc" }],
+        take: 3000,
+      }),
+      prisma.institution.findMany({
+        select: { id: true, name: true, districtId: true, type: true },
+        orderBy: [{ district: { province: { name: "asc" } } }, { district: { name: "asc" } }, { name: "asc" }],
+        take: 10000,
+      }),
+    ]);
+  } catch (error) {
+    if (isLocationTableMissingError(error)) {
+      locationTableMissing = true;
+      students = await prisma.student.findMany({
+        where: {
+          ...(phoneFilter
+            ? {
+                OR: [{ phone: { contains: phoneFilter } }, ...(phoneDigits ? [{ phone: { contains: phoneDigits } }] : [])],
+              }
+            : {}),
+          ...(status ? { status } : {}),
+          ...(subject
+            ? {
+                subjects: {
+                  in: subject === "CHEMISTRY" ? [Subjects.CHEMISTRY, Subjects.BOTH] : [Subjects.BIOLOGY, Subjects.BOTH],
+                },
+              }
+            : {}),
+        },
+        include: {
+          enrollments: {
+            include: {
+              group: {
+                select: {
+                  id: true,
+                  code: true,
+                  fan: true,
+                },
+              },
+            },
+            orderBy: { createdAt: "desc" },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 300,
+      });
+    } else {
+      throw error;
+    }
+  }
 
   return (
     <main className="space-y-4">
@@ -126,10 +207,21 @@ export default async function AdminStudentsPage({
       {params?.error ? (
         <p className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{params.error}</p>
       ) : null}
+      {locationTableMissing ? (
+        <p className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+          Location jadvallari DBga tushmagan. Avval migratsiya qiling:
+          <br />
+          <code>pnpm --filter @km/db exec prisma migrate dev --name add_locations_catalog</code>
+        </p>
+      ) : null}
 
       <section className="rounded bg-white p-4 shadow">
         <h2 className="mb-2 text-lg font-semibold">Student yaratish</h2>
-        <StudentCreateForm />
+        {locationTableMissing ? (
+          <p className="text-sm text-slate-600">Yangi student yaratish uchun yuqoridagi migratsiyani bajaring.</p>
+        ) : (
+          <StudentCreateForm provinces={provinces} districts={districts} institutions={institutions} />
+        )}
       </section>
 
       <section className="rounded bg-white p-4 shadow">
@@ -163,6 +255,9 @@ export default async function AdminStudentsPage({
                   <span className="font-semibold">Ism:</span> {student.fullName}
                 </p>
                 <p>
+                  <span className="font-semibold">Student_ID:</span> {student.studentCode}
+                </p>
+                <p>
                   <span className="font-semibold">Telefon:</span> {student.phone}
                 </p>
                 <p>
@@ -189,6 +284,15 @@ export default async function AdminStudentsPage({
                   <span className="font-semibold">Kimligi:</span> {formatPersonType(student.personType)}
                 </p>
                 <p>
+                  <span className="font-semibold">Hudud:</span>{" "}
+                  {student.province?.name ?? "-"} / {student.district?.name ?? "-"}
+                </p>
+                <p>
+                  <span className="font-semibold">Muassasa:</span>{" "}
+                  {formatInstitutionType(student.institutionType)}
+                  {student.institution?.name ? ` - ${student.institution.name}` : ""}
+                </p>
+                <p>
                   <span className="font-semibold">Bo'sh vaqt:</span>{" "}
                   {formatAvailabilityDays(student.availabilityDays)} | {student.availabilityTime ?? "-"}
                 </p>
@@ -196,7 +300,7 @@ export default async function AdminStudentsPage({
                   <span className="font-semibold">Guruhlar:</span>{" "}
                   {student.enrollments.length > 0
                     ? student.enrollments
-                        .map((e) => `${e.group.code} (${e.status})`)
+                        .map((e: any) => `${e.group.code} (${e.status})`)
                         .join(", ")
                     : "-"}
                 </p>

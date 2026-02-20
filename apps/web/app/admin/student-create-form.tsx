@@ -3,18 +3,52 @@
 import { useMemo, useState } from "react";
 
 type SubjectsValue = "" | "CHEMISTRY" | "BIOLOGY" | "BOTH";
+type InstitutionTypeValue = "" | "SCHOOL" | "LYCEUM_COLLEGE" | "OTHER";
 
-export function StudentCreateForm() {
+type ProvinceOption = {
+  id: string;
+  name: string;
+};
+
+type DistrictOption = {
+  id: string;
+  name: string;
+  provinceId: string;
+};
+
+type InstitutionOption = {
+  id: string;
+  name: string;
+  districtId: string;
+  type: "SCHOOL" | "LYCEUM_COLLEGE";
+};
+
+type StudentCreateFormProps = {
+  provinces: ProvinceOption[];
+  districts: DistrictOption[];
+  institutions: InstitutionOption[];
+};
+
+export function StudentCreateForm({ provinces, districts, institutions }: StudentCreateFormProps) {
   const [subjects, setSubjects] = useState<SubjectsValue>("");
+  const [provinceId, setProvinceId] = useState("");
+  const [districtId, setDistrictId] = useState("");
+  const [institutionType, setInstitutionType] = useState<InstitutionTypeValue>("");
+  const [institutionId, setInstitutionId] = useState("");
 
-  const showChemistryLevel = useMemo(
-    () => subjects === "CHEMISTRY" || subjects === "BOTH",
-    [subjects],
+  const showChemistryLevel = useMemo(() => subjects === "CHEMISTRY" || subjects === "BOTH", [subjects]);
+  const showBiologyLevel = useMemo(() => subjects === "BIOLOGY" || subjects === "BOTH", [subjects]);
+
+  const filteredDistricts = useMemo(
+    () => districts.filter((district) => district.provinceId === provinceId),
+    [districts, provinceId],
   );
-  const showBiologyLevel = useMemo(
-    () => subjects === "BIOLOGY" || subjects === "BOTH",
-    [subjects],
-  );
+
+  const filteredInstitutions = useMemo(() => {
+    if (!districtId || !institutionType || institutionType === "OTHER") return [];
+    const type = institutionType === "SCHOOL" ? "SCHOOL" : "LYCEUM_COLLEGE";
+    return institutions.filter((institution) => institution.districtId === districtId && institution.type === type);
+  }, [districtId, institutionType, institutions]);
 
   return (
     <form action="/api/admin/students" method="post" className="grid gap-2">
@@ -61,6 +95,98 @@ export function StudentCreateForm() {
         </select>
       ) : null}
 
+      <div className="rounded border border-slate-200 p-3">
+        <p className="mb-2 text-sm font-medium text-slate-700">Hudud va ta'lim muassasasi</p>
+
+        <div className="grid gap-2 md:grid-cols-2">
+          <select
+            name="provinceId"
+            className="rounded border p-2"
+            value={provinceId}
+            onChange={(e) => {
+              const next = e.target.value;
+              setProvinceId(next);
+              setDistrictId("");
+              setInstitutionType("");
+              setInstitutionId("");
+            }}
+            required
+          >
+            <option value="">Viloyat tanlang</option>
+            {provinces.map((province) => (
+              <option key={province.id} value={province.id}>
+                {province.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            name="districtId"
+            className="rounded border p-2"
+            value={districtId}
+            onChange={(e) => {
+              setDistrictId(e.target.value);
+              setInstitutionType("");
+              setInstitutionId("");
+            }}
+            disabled={!provinceId}
+            required
+          >
+            <option value="">Tuman tanlang</option>
+            {filteredDistricts.map((district) => (
+              <option key={district.id} value={district.id}>
+                {district.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="mt-2 grid gap-2 md:grid-cols-2">
+          <select
+            name="institutionType"
+            className="rounded border p-2"
+            value={institutionType}
+            onChange={(e) => {
+              setInstitutionType(e.target.value as InstitutionTypeValue);
+              setInstitutionId("");
+            }}
+            disabled={!districtId}
+            required
+          >
+            <option value="">Ta'lim muassasasi turi</option>
+            <option value="SCHOOL">Maktab</option>
+            <option value="LYCEUM_COLLEGE">Litsey/Kollej</option>
+            <option value="OTHER">Boshqa</option>
+          </select>
+
+          {institutionType === "SCHOOL" || institutionType === "LYCEUM_COLLEGE" ? (
+            <select
+              name="institutionId"
+              className="rounded border p-2"
+              value={institutionId}
+              onChange={(e) => setInstitutionId(e.target.value)}
+              required
+            >
+              <option value="">
+                {institutionType === "SCHOOL" ? "Maktabni tanlang" : "Litsey/Kollejni tanlang"}
+              </option>
+              {filteredInstitutions.map((institution) => (
+                <option key={institution.id} value={institution.id}>
+                  {institution.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              name="institutionId"
+              type="hidden"
+              value=""
+              readOnly
+            />
+          )}
+        </div>
+      </div>
+
       <select name="personType" className="rounded border p-2" defaultValue="" required>
         <option value="">Kimligi tanlang</option>
         <option value="GRADE_6">6-sinf</option>
@@ -90,12 +216,7 @@ export function StudentCreateForm() {
         required
       />
 
-      <textarea
-        name="note"
-        className="rounded border p-2"
-        placeholder="Izoh (ixtiyoriy)"
-        rows={3}
-      />
+      <textarea name="note" className="rounded border p-2" placeholder="Izoh (ixtiyoriy)" rows={3} />
 
       <button className="rounded bg-blue-600 p-2 text-white">Student qo'shish</button>
     </form>

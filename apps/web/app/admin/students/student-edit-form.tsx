@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 type SubjectsValue = "" | "CHEMISTRY" | "BIOLOGY" | "BOTH";
+type InstitutionTypeValue = "" | "SCHOOL" | "LYCEUM_COLLEGE" | "OTHER";
 
 type PersonTypeValue =
   | ""
@@ -23,6 +24,24 @@ type AvailabilityDaysValue = "" | "DU_CHOR_JU" | "SE_PAY_SHAN" | "FARQI_YOQ";
 
 type StudentStatusValue = "ACTIVE" | "PAUSED" | "BLOCKED";
 
+type ProvinceOption = {
+  id: string;
+  name: string;
+};
+
+type DistrictOption = {
+  id: string;
+  name: string;
+  provinceId: string;
+};
+
+type InstitutionOption = {
+  id: string;
+  name: string;
+  districtId: string;
+  type: "SCHOOL" | "LYCEUM_COLLEGE";
+};
+
 type StudentEditFormProps = {
   student: {
     id: string;
@@ -33,6 +52,10 @@ type StudentEditFormProps = {
     subjects: "CHEMISTRY" | "BIOLOGY" | "BOTH" | null;
     chemistryLevel: number | null;
     biologyLevel: number | null;
+    provinceId: string | null;
+    districtId: string | null;
+    institutionType: "SCHOOL" | "LYCEUM_COLLEGE" | "OTHER" | null;
+    institutionId: string | null;
     personType:
       | "GRADE_6"
       | "GRADE_7"
@@ -50,19 +73,33 @@ type StudentEditFormProps = {
     availabilityTime: string | null;
     note: string | null;
   };
+  provinces: ProvinceOption[];
+  districts: DistrictOption[];
+  institutions: InstitutionOption[];
 };
 
-export function StudentEditForm({ student }: StudentEditFormProps) {
+export function StudentEditForm({ student, provinces, districts, institutions }: StudentEditFormProps) {
   const [subjects, setSubjects] = useState<SubjectsValue>(student.subjects ?? "");
+  const [provinceId, setProvinceId] = useState(student.provinceId ?? "");
+  const [districtId, setDistrictId] = useState(student.districtId ?? "");
+  const [institutionType, setInstitutionType] = useState<InstitutionTypeValue>(student.institutionType ?? "");
+  const [institutionId, setInstitutionId] = useState(
+    student.institutionType === "SCHOOL" || student.institutionType === "LYCEUM_COLLEGE" ? (student.institutionId ?? "") : "",
+  );
 
-  const showChemistryLevel = useMemo(
-    () => subjects === "CHEMISTRY" || subjects === "BOTH",
-    [subjects],
+  const showChemistryLevel = useMemo(() => subjects === "CHEMISTRY" || subjects === "BOTH", [subjects]);
+  const showBiologyLevel = useMemo(() => subjects === "BIOLOGY" || subjects === "BOTH", [subjects]);
+
+  const filteredDistricts = useMemo(
+    () => districts.filter((district) => district.provinceId === provinceId),
+    [districts, provinceId],
   );
-  const showBiologyLevel = useMemo(
-    () => subjects === "BIOLOGY" || subjects === "BOTH",
-    [subjects],
-  );
+
+  const filteredInstitutions = useMemo(() => {
+    if (!districtId || !institutionType || institutionType === "OTHER") return [];
+    const type = institutionType === "SCHOOL" ? "SCHOOL" : "LYCEUM_COLLEGE";
+    return institutions.filter((institution) => institution.districtId === districtId && institution.type === type);
+  }, [districtId, institutionType, institutions]);
 
   return (
     <form action={`/api/admin/students/${student.id}`} method="post" className="grid gap-3">
@@ -142,6 +179,93 @@ export function StudentEditForm({ student }: StudentEditFormProps) {
             <option value="4">4</option>
           </select>
         ) : null}
+      </div>
+
+      <div className="rounded border border-slate-200 p-3">
+        <p className="mb-2 text-sm font-medium text-slate-700">Hudud va ta'lim muassasasi</p>
+
+        <div className="grid gap-2 md:grid-cols-2">
+          <select
+            name="provinceId"
+            className="rounded border p-2"
+            value={provinceId}
+            onChange={(e) => {
+              const next = e.target.value;
+              setProvinceId(next);
+              setDistrictId("");
+              setInstitutionType("");
+              setInstitutionId("");
+            }}
+            required
+          >
+            <option value="">Viloyat tanlang</option>
+            {provinces.map((province) => (
+              <option key={province.id} value={province.id}>
+                {province.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            name="districtId"
+            className="rounded border p-2"
+            value={districtId}
+            onChange={(e) => {
+              setDistrictId(e.target.value);
+              setInstitutionType("");
+              setInstitutionId("");
+            }}
+            disabled={!provinceId}
+            required
+          >
+            <option value="">Tuman tanlang</option>
+            {filteredDistricts.map((district) => (
+              <option key={district.id} value={district.id}>
+                {district.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="mt-2 grid gap-2 md:grid-cols-2">
+          <select
+            name="institutionType"
+            className="rounded border p-2"
+            value={institutionType}
+            onChange={(e) => {
+              setInstitutionType(e.target.value as InstitutionTypeValue);
+              setInstitutionId("");
+            }}
+            disabled={!districtId}
+            required
+          >
+            <option value="">Ta'lim muassasasi turi</option>
+            <option value="SCHOOL">Maktab</option>
+            <option value="LYCEUM_COLLEGE">Litsey/Kollej</option>
+            <option value="OTHER">Boshqa</option>
+          </select>
+
+          {institutionType === "SCHOOL" || institutionType === "LYCEUM_COLLEGE" ? (
+            <select
+              name="institutionId"
+              className="rounded border p-2"
+              value={institutionId}
+              onChange={(e) => setInstitutionId(e.target.value)}
+              required
+            >
+              <option value="">
+                {institutionType === "SCHOOL" ? "Maktabni tanlang" : "Litsey/Kollejni tanlang"}
+              </option>
+              {filteredInstitutions.map((institution) => (
+                <option key={institution.id} value={institution.id}>
+                  {institution.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input name="institutionId" type="hidden" value="" readOnly />
+          )}
+        </div>
       </div>
 
       <select

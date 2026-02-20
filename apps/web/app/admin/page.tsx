@@ -76,6 +76,12 @@ export default async function AdminDashboardPage({
           <Link href="/admin/groups" className="rounded bg-slate-800 px-3 py-2 text-sm text-white">
             Groups
           </Link>
+          <Link href="/admin/locations" className="rounded bg-slate-800 px-3 py-2 text-sm text-white">
+            Locations
+          </Link>
+          <Link href="/admin/locations/excel-import" className="rounded bg-slate-800 px-3 py-2 text-sm text-white">
+            Excel Import
+          </Link>
           <Link href="/admin/tests" className="rounded bg-slate-800 px-3 py-2 text-sm text-white">
             Tests
           </Link>

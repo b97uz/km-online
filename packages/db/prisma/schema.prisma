@@ -51,6 +51,17 @@ enum AvailabilityDays {
   FARQI_YOQ
 }
 
+enum InstitutionType {
+  SCHOOL
+  LYCEUM_COLLEGE
+  OTHER
+}
+
+enum InstitutionCatalogType {
+  SCHOOL
+  LYCEUM_COLLEGE
+}
+
 enum GroupCatalogStatus {
   REJADA
   OCHIQ
@@ -74,6 +85,8 @@ enum PaymentMethod {
   CASH
   PAYME
   CLICK
+  UZUM
+  PAYNET
   BANK
 }
 
@@ -81,6 +94,21 @@ enum PaymentStatus {
   PAID
   PARTIAL
   DEBT
+}
+
+enum PaymentProvider {
+  PAYME
+  CLICK
+  UZUM
+  PAYNET
+}
+
+enum PaymentCheckoutStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELED
+  EXPIRED
 }
 
 enum CuratorWorkDays {
@@ -177,6 +205,7 @@ model GroupStudent {
 
 model Student {
   id          String        @id @default(uuid())
+  studentCode String        @unique
   fullName    String
   phone       String        @unique
   parentPhone String?
@@ -184,6 +213,11 @@ model Student {
   subjects    Subjects?
   chemistryLevel Int?
   biologyLevel   Int?
+  provinceId  String?
+  districtId  String?
+  institutionType InstitutionType?
+  institutionId String?
+  institutionName String?
   personType  PersonType?
   availabilityDays AvailabilityDays?
   availabilityTime String?
@@ -192,12 +226,59 @@ model Student {
   createdAt   DateTime      @default(now())
 
   user        User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  province    Province?     @relation(fields: [provinceId], references: [id], onDelete: SetNull)
+  district    District?     @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  institution Institution?  @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   enrollments Enrollment[]
   payments    Payment[]
+  paymentCheckouts PaymentCheckout[]
   journalEntries GroupJournalEntry[]
   appeals     Appeal[]
 
   @@index([phone, status])
+  @@index([provinceId])
+  @@index([districtId])
+  @@index([institutionId])
+}
+
+model Province {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  districts District[]
+  students  Student[]
+}
+
+model District {
+  id         String   @id @default(uuid())
+  provinceId String
+  name       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  province     Province      @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  institutions Institution[]
+  students     Student[]
+
+  @@unique([provinceId, name])
+  @@index([provinceId])
+}
+
+model Institution {
+  id        String                 @id @default(uuid())
+  districtId String
+  type      InstitutionCatalogType
+  name      String
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+
+  district District  @relation(fields: [districtId], references: [id], onDelete: Restrict)
+  students Student[]
+
+  @@unique([districtId, type, name])
+  @@index([districtId, type])
 }
 
 model GroupCatalog {
@@ -217,6 +298,7 @@ model GroupCatalog {
   curator     User?        @relation("CatalogCurator", fields: [curatorId], references: [id], onDelete: SetNull)
   enrollments Enrollment[]
   payments    Payment[]
+  paymentCheckouts PaymentCheckout[]
   journalDates GroupJournalDate[]
 
   @@index([curatorId, status])
@@ -227,6 +309,7 @@ model Enrollment {
   studentId String
   groupId   String
   status    EnrollmentStatus @default(ACTIVE)
+  studyStartDate DateTime?
   createdAt DateTime         @default(now())
 
   student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
@@ -417,6 +500,32 @@ model Payment {
   @@index([subject, status])
   @@index([groupId, periodEnd])
   @@index([isDeleted, month])
+}
+
+model PaymentCheckout {
+  id             String              @id @default(cuid())
+  studentId      String
+  groupId        String?
+  provider       PaymentProvider
+  amount         Int
+  status         PaymentCheckoutStatus @default(PENDING)
+  studentCode    String
+  callbackToken  String              @unique
+  externalTxnId  String?
+  externalStatus String?
+  paidAt         DateTime?
+  note           String?
+  requestPayload Json?
+  responsePayload Json?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  student Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  group   GroupCatalog? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  @@index([studentId, status, createdAt])
+  @@index([groupId, status, createdAt])
+  @@index([externalTxnId])
 }
 
 model ParentContact {

@@ -5,6 +5,7 @@ STUDENT_BTN_APPEAL = "✍️ E'tiroz bildirish"
 
 PARENT_BTN_RESULTS = "📘 O'quvchi natijalari"
 PARENT_BTN_DEBT = "💸 Qarzdorlik"
+PARENT_BTN_PAY = "💳 To'lov qilish"
 PARENT_BTN_APPEAL = "✍️ E'tiroz bildirish"
 
 STUDENT_BUTTONS = {
@@ -17,6 +18,7 @@ STUDENT_BUTTONS = {
 PARENT_BUTTONS = {
     PARENT_BTN_RESULTS,
     PARENT_BTN_DEBT,
+    PARENT_BTN_PAY,
     PARENT_BTN_APPEAL,
 }
 

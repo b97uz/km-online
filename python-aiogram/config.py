@@ -18,6 +18,12 @@ class Settings:
     node_env: str
     allow_partial_submissions: bool
     debug_updates: bool
+    payme_url_template: str = ""
+    click_url_template: str = ""
+    uzum_url_template: str = ""
+    paynet_url_template: str = ""
+    payment_callback_base_url: str = ""
+    allow_mock_payment_links: bool = True
 
     @property
     def is_production(self) -> bool:
@@ -59,4 +65,13 @@ def load_settings() -> Settings:
         node_env=os.getenv("NODE_ENV", "development"),
         allow_partial_submissions=os.getenv("ALLOW_PARTIAL_SUBMISSIONS", "false").lower() == "true",
         debug_updates=os.getenv("NODE_ENV", "development") != "production",
+        payme_url_template=os.getenv("PAYME_URL_TEMPLATE", "").strip(),
+        click_url_template=os.getenv("CLICK_URL_TEMPLATE", "").strip(),
+        uzum_url_template=os.getenv("UZUM_URL_TEMPLATE", "").strip(),
+        paynet_url_template=os.getenv("PAYNET_URL_TEMPLATE", "").strip(),
+        payment_callback_base_url=os.getenv(
+            "PAYMENT_CALLBACK_BASE_URL",
+            f"{web_base_url.rstrip('/')}/api/payment-gateway/callback",
+        ).strip(),
+        allow_mock_payment_links=os.getenv("ALLOW_MOCK_PAYMENT_LINKS", "true").lower() == "true",
     )

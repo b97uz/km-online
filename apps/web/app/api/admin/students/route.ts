@@ -1,7 +1,9 @@
-import { AvailabilityDays, PersonType, Role, StudentStatus, Subjects } from "@prisma/client";
+import { AvailabilityDays, InstitutionType, PersonType, Role, StudentStatus, Subjects } from "@prisma/client";
 import { prisma } from "@km/db";
 import { getSession } from "@/lib/auth";
 import { isUzE164, normalizeUzPhone, phoneVariants } from "@/lib/phone";
+import { parseInstitutionType } from "@/lib/locations";
+import { generateNextStudentId } from "@/lib/student-id";
 import { NextResponse } from "next/server";
 
 function parseStudentStatus(value: string): StudentStatus {
@@ -71,6 +73,10 @@ async function readInput(req: Request): Promise<Record<string, string>> {
       subjects: String(data.subjects ?? ""),
       chemistryLevel: String(data.chemistryLevel ?? ""),
       biologyLevel: String(data.biologyLevel ?? ""),
+      provinceId: String(data.provinceId ?? ""),
+      districtId: String(data.districtId ?? ""),
+      institutionType: String(data.institutionType ?? ""),
+      institutionId: String(data.institutionId ?? ""),
       personType: String(data.personType ?? ""),
       availabilityDays: String(data.availabilityDays ?? ""),
       availabilityTime: String(data.availabilityTime ?? ""),
@@ -87,6 +93,10 @@ async function readInput(req: Request): Promise<Record<string, string>> {
     subjects: String(form.get("subjects") ?? ""),
     chemistryLevel: String(form.get("chemistryLevel") ?? ""),
     biologyLevel: String(form.get("biologyLevel") ?? ""),
+    provinceId: String(form.get("provinceId") ?? ""),
+    districtId: String(form.get("districtId") ?? ""),
+    institutionType: String(form.get("institutionType") ?? ""),
+    institutionId: String(form.get("institutionId") ?? ""),
     personType: String(form.get("personType") ?? ""),
     availabilityDays: String(form.get("availabilityDays") ?? ""),
     availabilityTime: String(form.get("availabilityTime") ?? ""),
@@ -108,6 +118,10 @@ export async function POST(req: Request) {
   const subjects = parseSubjects(input.subjects);
   const chemistryLevelRaw = parseLevel(input.chemistryLevel.trim());
   const biologyLevelRaw = parseLevel(input.biologyLevel.trim());
+  const provinceId = input.provinceId.trim() || null;
+  const districtId = input.districtId.trim() || null;
+  const institutionType = parseInstitutionType(input.institutionType.trim());
+  const institutionIdInput = input.institutionId.trim() || null;
   const personType = parsePersonType(input.personType.trim());
   const availabilityDays = parseAvailabilityDays(input.availabilityDays.trim());
   const availabilityTime = input.availabilityTime.trim();
@@ -121,6 +135,21 @@ export async function POST(req: Request) {
   if (!subjects) {
     if (isJson) return NextResponse.json({ ok: false, error: "Fan tanlanishi shart" }, { status: 400 });
     return redirectAdmin(req, "Fan tanlanishi shart", true);
+  }
+
+  if (!provinceId) {
+    if (isJson) return NextResponse.json({ ok: false, error: "Viloyat tanlanishi shart" }, { status: 400 });
+    return redirectAdmin(req, "Viloyat tanlanishi shart", true);
+  }
+
+  if (!districtId) {
+    if (isJson) return NextResponse.json({ ok: false, error: "Tuman tanlanishi shart" }, { status: 400 });
+    return redirectAdmin(req, "Tuman tanlanishi shart", true);
+  }
+
+  if (!institutionType) {
+    if (isJson) return NextResponse.json({ ok: false, error: "Ta'lim muassasasi turi tanlanishi shart" }, { status: 400 });
+    return redirectAdmin(req, "Ta'lim muassasasi turi tanlanishi shart", true);
   }
 
   if (!personType) {
@@ -146,6 +175,8 @@ export async function POST(req: Request) {
   let parentPhone: string | null = null;
   let chemistryLevel: number | null = null;
   let biologyLevel: number | null = null;
+  let institutionId: string | null = null;
+  let institutionName: string | null = null;
 
   if (parentPhoneRaw) {
     if (!isUzE164(parentPhoneRaw)) {
@@ -185,6 +216,41 @@ export async function POST(req: Request) {
     biologyLevel = biologyLevelRaw;
   }
 
+  const district = await prisma.district.findUnique({
+    where: { id: districtId },
+    select: { id: true, provinceId: true },
+  });
+
+  if (!district || district.provinceId !== provinceId) {
+    if (isJson) return NextResponse.json({ ok: false, error: "Viloyat va tuman mos emas" }, { status: 400 });
+    return redirectAdmin(req, "Viloyat va tuman mos emas", true);
+  }
+
+  if (institutionType === InstitutionType.OTHER) {
+    institutionId = null;
+    institutionName = null;
+  } else {
+    if (!institutionIdInput) {
+      const message = institutionType === InstitutionType.SCHOOL ? "Maktab tanlanishi shart" : "Litsey/Kollej tanlanishi shart";
+      if (isJson) return NextResponse.json({ ok: false, error: message }, { status: 400 });
+      return redirectAdmin(req, message, true);
+    }
+
+    const institution = await prisma.institution.findUnique({
+      where: { id: institutionIdInput },
+      select: { id: true, districtId: true, type: true, name: true },
+    });
+
+    const expectedType = institutionType === InstitutionType.SCHOOL ? "SCHOOL" : "LYCEUM_COLLEGE";
+    if (!institution || institution.districtId !== districtId || institution.type !== expectedType) {
+      if (isJson) return NextResponse.json({ ok: false, error: "Tanlangan muassasa noto'g'ri" }, { status: 400 });
+      return redirectAdmin(req, "Tanlangan muassasa noto'g'ri", true);
+    }
+
+    institutionId = institution.id;
+    institutionName = institution.name;
+  }
+
   try {
     const result = await prisma.$transaction(async (tx) => {
       const phoneOr = phoneVariants(phone).map((value) => ({ phone: value }));
@@ -216,8 +282,11 @@ export async function POST(req: Request) {
             },
           });
 
+      const studentCode = await generateNextStudentId(tx);
+
       const student = await tx.student.create({
         data: {
+          studentCode,
           fullName,
           phone,
           parentPhone,
@@ -225,6 +294,11 @@ export async function POST(req: Request) {
           subjects,
           chemistryLevel,
           biologyLevel,
+          provinceId,
+          districtId,
+          institutionType,
+          institutionId,
+          institutionName,
           personType,
           availabilityDays,
           availabilityTime,
@@ -240,11 +314,17 @@ export async function POST(req: Request) {
           entity: "Student",
           entityId: student.id,
           payload: {
+            studentCode,
             phone,
             status,
             subjects,
             chemistryLevel,
             biologyLevel,
+            provinceId,
+            districtId,
+            institutionType,
+            institutionId,
+            institutionName,
             personType,
             availabilityDays,
             availabilityTime,
@@ -268,6 +348,16 @@ export async function POST(req: Request) {
     if (message === "PHONE_USED_BY_OTHER_ROLE") {
       if (isJson) return NextResponse.json({ ok: false, error: "Bu telefon boshqa role uchun ishlatilgan" }, { status: 409 });
       return redirectAdmin(req, "Bu telefon boshqa role uchun ishlatilgan", true);
+    }
+
+    if (message === "STUDENT_ID_SEQUENCE_ERROR") {
+      if (isJson) return NextResponse.json({ ok: false, error: "Student_ID generatsiyada xatolik bo'ldi" }, { status: 500 });
+      return redirectAdmin(req, "Student_ID generatsiyada xatolik bo'ldi", true);
+    }
+
+    if (message === "STUDENT_ID_LIMIT_REACHED") {
+      if (isJson) return NextResponse.json({ ok: false, error: "Student_ID limiti tugagan (999999)" }, { status: 500 });
+      return redirectAdmin(req, "Student_ID limiti tugagan (999999)", true);
     }
 
     console.error("ADMIN_STUDENT_CREATE_ERROR", error);
@@ -298,6 +388,15 @@ export async function GET(req: Request) {
           ? { phone: { contains: phoneQuery } }
           : undefined,
     include: {
+      province: {
+        select: { id: true, name: true },
+      },
+      district: {
+        select: { id: true, name: true, provinceId: true },
+      },
+      institution: {
+        select: { id: true, name: true, districtId: true, type: true },
+      },
       enrollments: {
         include: {
           group: {

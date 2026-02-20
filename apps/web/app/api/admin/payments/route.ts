@@ -194,8 +194,6 @@ export async function POST(req: Request) {
             studentId: student.id,
             groupId,
             isDeleted: false,
-            periodStart: null,
-            periodEnd: null,
             note: {
               contains: "Auto qarzdorlik: SINOV -> AKTIV",
             },
@@ -204,41 +202,46 @@ export async function POST(req: Request) {
         });
 
         if (pendingAutoDebt) {
-          const mergedPaid = Math.max(0, pendingAutoDebt.amountPaid) + amountPaid;
-          const mergedDiscount = discount;
-          const mergedStatus = getPaymentStatus(amountRequired, mergedDiscount, mergedPaid);
+          const pendingRequiredNet = Math.max(0, pendingAutoDebt.amountRequired - pendingAutoDebt.discount);
+          const pendingDebt = Math.max(0, pendingRequiredNet - pendingAutoDebt.amountPaid);
 
-          const updated = await tx.payment.update({
-            where: { id: pendingAutoDebt.id },
-            data: {
-              subject,
-              month,
-              amountRequired,
-              amountPaid: mergedPaid,
-              discount: mergedDiscount,
-              paymentMethod,
-              status: mergedStatus,
-              paidAt,
-              periodStart,
-              periodEnd,
-              note: finalNote ?? pendingAutoDebt.note,
-              isDeleted: false,
-              deletedAt: null,
-              deletedById: null,
-            },
-          });
+          if (pendingDebt > 0) {
+            const mergedPaid = Math.max(0, pendingAutoDebt.amountPaid) + amountPaid;
+            const mergedDiscount = discount;
+            const mergedStatus = getPaymentStatus(amountRequired, mergedDiscount, mergedPaid);
 
-          await tx.auditLog.create({
-            data: {
-              actorId: session.userId,
-              action: "UPDATE",
-              entity: "Payment",
-              entityId: updated.id,
-              payload: { studentId: student.id, month, subject, status: mergedStatus, autoDebtSettled: true },
-            },
-          });
+            const updated = await tx.payment.update({
+              where: { id: pendingAutoDebt.id },
+              data: {
+                subject,
+                month,
+                amountRequired,
+                amountPaid: mergedPaid,
+                discount: mergedDiscount,
+                paymentMethod,
+                status: mergedStatus,
+                paidAt,
+                periodStart,
+                periodEnd,
+                note: finalNote ?? pendingAutoDebt.note,
+                isDeleted: false,
+                deletedAt: null,
+                deletedById: null,
+              },
+            });
 
-          return updated;
+            await tx.auditLog.create({
+              data: {
+                actorId: session.userId,
+                action: "UPDATE",
+                entity: "Payment",
+                entityId: updated.id,
+                payload: { studentId: student.id, month, subject, status: mergedStatus, autoDebtSettled: true },
+              },
+            });
+
+            return updated;
+          }
         }
       }
 

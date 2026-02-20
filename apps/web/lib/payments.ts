@@ -11,6 +11,8 @@ export function parsePaymentMethod(value: string): PaymentMethod | null {
   if (value === "CASH") return PaymentMethod.CASH;
   if (value === "PAYME") return PaymentMethod.PAYME;
   if (value === "CLICK") return PaymentMethod.CLICK;
+  if (value === "UZUM") return PaymentMethod.UZUM;
+  if (value === "PAYNET") return PaymentMethod.PAYNET;
   if (value === "BANK") return PaymentMethod.BANK;
   return null;
 }

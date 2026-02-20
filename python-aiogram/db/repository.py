@@ -43,7 +43,7 @@ class BotRepository:
             return None
 
         sql = """
-        SELECT s.id, s."userId", s."fullName", s.phone, s."parentPhone", s.status
+        SELECT s.id, s."studentCode", s."userId", s."fullName", s.phone, s."parentPhone", s.status
         FROM "Student" s
         WHERE s.status = 'ACTIVE'
           AND s.phone = ANY($1::text[])
@@ -65,7 +65,7 @@ class BotRepository:
 
             row = await conn.fetchrow(
                 """
-                SELECT s.id, s."userId", s."fullName", s.phone, s."parentPhone", s.status
+                SELECT s.id, s."studentCode", s."userId", s."fullName", s.phone, s."parentPhone", s.status
                 FROM "Student" s
                 WHERE s.status = 'ACTIVE'
                   AND s."parentPhone" = ANY($1::text[])
@@ -179,7 +179,7 @@ class BotRepository:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT u.id AS user_id, s.id AS student_id, s."fullName", s.phone, s."parentPhone"
+                SELECT u.id AS user_id, s.id AS student_id, s."studentCode", s."fullName", s.phone, s."parentPhone"
                 FROM "User" u
                 JOIN "Student" s ON s."userId" = u.id
                 WHERE u."telegramUserId" = $1
@@ -206,6 +206,7 @@ class BotRepository:
                     "userId": row["user_id"],
                     "student": {
                         "id": row["student_id"],
+                        "studentCode": row["studentCode"],
                         "fullName": row["fullName"],
                         "phone": row["phone"],
                         "parentPhone": row["parentPhone"],
@@ -226,7 +227,7 @@ class BotRepository:
 
             row = await conn.fetchrow(
                 """
-                SELECT s.id AS student_id, s."userId", s."fullName", s.phone, s."parentPhone"
+                SELECT s.id AS student_id, s."studentCode", s."userId", s."fullName", s.phone, s."parentPhone"
                 FROM "Student" s
                 WHERE s.status = 'ACTIVE'
                   AND s."parentPhone" = ANY($1::text[])
@@ -253,6 +254,7 @@ class BotRepository:
                 "type": "PARENT",
                 "student": {
                     "id": row["student_id"],
+                    "studentCode": row["studentCode"],
                     "userId": row["userId"],
                     "fullName": row["fullName"],
                     "phone": row["phone"],
@@ -542,6 +544,7 @@ class BotRepository:
                   p."amountPaid",
                   p.discount,
                   p.month,
+                  p."periodStart",
                   p."periodEnd",
                   p."groupId",
                   p.status,
@@ -558,6 +561,50 @@ class BotRepository:
                 student_registry_id,
             )
             return [dict(row) for row in rows]
+
+    async def create_payment_checkout(
+        self,
+        *,
+        student_id: str,
+        student_code: str,
+        provider: str,
+        amount: int,
+        group_id: str | None,
+        note: str | None,
+    ) -> dict:
+        checkout_id = self._new_id()
+        callback_token = uuid4().hex
+
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO "PaymentCheckout"
+                  (id, "studentId", "groupId", provider, amount, status, "studentCode", "callbackToken", note)
+                VALUES
+                  ($1, $2, $3, $4::"PaymentProvider", $5, 'PENDING'::"PaymentCheckoutStatus", $6, $7, $8)
+                RETURNING id, "studentId", "groupId", provider, amount, status, "studentCode", "callbackToken", "createdAt"
+                """,
+                checkout_id,
+                student_id,
+                group_id,
+                provider,
+                amount,
+                student_code,
+                callback_token,
+                note,
+            )
+
+        return dict(row) if row else {
+            "id": checkout_id,
+            "studentId": student_id,
+            "groupId": group_id,
+            "provider": provider,
+            "amount": amount,
+            "status": "PENDING",
+            "studentCode": student_code,
+            "callbackToken": callback_token,
+            "createdAt": datetime.utcnow(),
+        }
 
     async def get_parent_recent_submissions(self, student_user_id: str) -> list[dict]:
         async with self.pool.acquire() as conn:

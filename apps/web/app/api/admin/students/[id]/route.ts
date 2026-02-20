@@ -1,6 +1,7 @@
-import { AvailabilityDays, PersonType, Role, StudentStatus, Subjects } from "@prisma/client";
+import { AvailabilityDays, InstitutionType, PersonType, Role, StudentStatus, Subjects } from "@prisma/client";
 import { prisma } from "@km/db";
 import { getSession } from "@/lib/auth";
+import { parseInstitutionType } from "@/lib/locations";
 import { isUzE164, normalizeUzPhone, phoneVariants } from "@/lib/phone";
 import { NextResponse } from "next/server";
 
@@ -70,6 +71,10 @@ async function updateStudent(
     subjects?: string;
     chemistryLevel?: string;
     biologyLevel?: string;
+    provinceId?: string;
+    districtId?: string;
+    institutionType?: string;
+    institutionId?: string;
     personType?: string;
     availabilityDays?: string;
     availabilityTime?: string;
@@ -93,6 +98,10 @@ async function updateStudent(
     payload.subjects !== undefined ||
     payload.chemistryLevel !== undefined ||
     payload.biologyLevel !== undefined ||
+    payload.provinceId !== undefined ||
+    payload.districtId !== undefined ||
+    payload.institutionType !== undefined ||
+    payload.institutionId !== undefined ||
     payload.personType !== undefined ||
     payload.availabilityDays !== undefined ||
     payload.availabilityTime !== undefined;
@@ -183,6 +192,28 @@ async function updateStudent(
 
   const chemistryLevelRaw = payload.chemistryLevel !== undefined ? parseLevel(payload.chemistryLevel.trim()) : student.chemistryLevel;
   const biologyLevelRaw = payload.biologyLevel !== undefined ? parseLevel(payload.biologyLevel.trim()) : student.biologyLevel;
+  const nextProvinceId = payload.provinceId !== undefined ? payload.provinceId.trim() || null : student.provinceId;
+  const nextDistrictId = payload.districtId !== undefined ? payload.districtId.trim() || null : student.districtId;
+  const nextInstitutionType =
+    payload.institutionType !== undefined
+      ? parseInstitutionType(payload.institutionType.trim())
+      : student.institutionType;
+  const nextInstitutionIdInput = payload.institutionId !== undefined ? payload.institutionId.trim() || null : student.institutionId;
+
+  if (!nextProvinceId) {
+    if (asJson) return NextResponse.json({ ok: false, error: "Viloyat tanlanishi shart" }, { status: 400 });
+    return redirectAdmin(req, "Viloyat tanlanishi shart", true);
+  }
+
+  if (!nextDistrictId) {
+    if (asJson) return NextResponse.json({ ok: false, error: "Tuman tanlanishi shart" }, { status: 400 });
+    return redirectAdmin(req, "Tuman tanlanishi shart", true);
+  }
+
+  if (!nextInstitutionType) {
+    if (asJson) return NextResponse.json({ ok: false, error: "Ta'lim muassasasi turi tanlanishi shart" }, { status: 400 });
+    return redirectAdmin(req, "Ta'lim muassasasi turi tanlanishi shart", true);
+  }
 
   const nextPersonType = payload.personType !== undefined ? parsePersonType(payload.personType.trim()) : student.personType;
   if (!nextPersonType) {
@@ -206,6 +237,8 @@ async function updateStudent(
 
   let chemistryLevel: number | null = null;
   let biologyLevel: number | null = null;
+  let institutionId: string | null = null;
+  let institutionName: string | null = null;
 
   if (nextSubjects === Subjects.CHEMISTRY) {
     if (!chemistryLevelRaw) {
@@ -235,6 +268,41 @@ async function updateStudent(
     }
     chemistryLevel = chemistryLevelRaw;
     biologyLevel = biologyLevelRaw;
+  }
+
+  const district = await prisma.district.findUnique({
+    where: { id: nextDistrictId },
+    select: { id: true, provinceId: true },
+  });
+
+  if (!district || district.provinceId !== nextProvinceId) {
+    if (asJson) return NextResponse.json({ ok: false, error: "Viloyat va tuman mos emas" }, { status: 400 });
+    return redirectAdmin(req, "Viloyat va tuman mos emas", true);
+  }
+
+  if (nextInstitutionType === InstitutionType.OTHER) {
+    institutionId = null;
+    institutionName = null;
+  } else {
+    if (!nextInstitutionIdInput) {
+      const message = nextInstitutionType === InstitutionType.SCHOOL ? "Maktab tanlanishi shart" : "Litsey/Kollej tanlanishi shart";
+      if (asJson) return NextResponse.json({ ok: false, error: message }, { status: 400 });
+      return redirectAdmin(req, message, true);
+    }
+
+    const institution = await prisma.institution.findUnique({
+      where: { id: nextInstitutionIdInput },
+      select: { id: true, districtId: true, type: true, name: true },
+    });
+
+    const expectedType = nextInstitutionType === InstitutionType.SCHOOL ? "SCHOOL" : "LYCEUM_COLLEGE";
+    if (!institution || institution.districtId !== nextDistrictId || institution.type !== expectedType) {
+      if (asJson) return NextResponse.json({ ok: false, error: "Tanlangan muassasa noto'g'ri" }, { status: 400 });
+      return redirectAdmin(req, "Tanlangan muassasa noto'g'ri", true);
+    }
+
+    institutionId = institution.id;
+    institutionName = institution.name;
   }
 
   try {
@@ -270,6 +338,11 @@ async function updateStudent(
           subjects: nextSubjects,
           chemistryLevel,
           biologyLevel,
+          provinceId: nextProvinceId,
+          districtId: nextDistrictId,
+          institutionType: nextInstitutionType,
+          institutionId,
+          institutionName,
           personType: nextPersonType,
           availabilityDays: nextAvailabilityDays,
           availabilityTime: nextAvailabilityTime,
@@ -302,6 +375,11 @@ async function updateStudent(
             subjects: nextSubjects,
             chemistryLevel,
             biologyLevel,
+            provinceId: nextProvinceId,
+            districtId: nextDistrictId,
+            institutionType: nextInstitutionType,
+            institutionId,
+            institutionName,
             personType: nextPersonType,
             availabilityDays: nextAvailabilityDays,
             availabilityTime: nextAvailabilityTime,
@@ -381,6 +459,10 @@ export async function PATCH(
     subjects?: string;
     chemistryLevel?: string;
     biologyLevel?: string;
+    provinceId?: string;
+    districtId?: string;
+    institutionType?: string;
+    institutionId?: string;
     personType?: string;
     availabilityDays?: string;
     availabilityTime?: string;
@@ -420,6 +502,10 @@ export async function POST(
         subjects: read("subjects"),
         chemistryLevel: read("chemistryLevel"),
         biologyLevel: read("biologyLevel"),
+        provinceId: read("provinceId"),
+        districtId: read("districtId"),
+        institutionType: read("institutionType"),
+        institutionId: read("institutionId"),
         personType: read("personType"),
         availabilityDays: read("availabilityDays"),
         availabilityTime: read("availabilityTime"),

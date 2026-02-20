@@ -5,6 +5,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from .constants import (
     PARENT_BTN_APPEAL,
     PARENT_BTN_DEBT,
+    PARENT_BTN_PAY,
     PARENT_BTN_RESULTS,
     STUDENT_BTN_APPEAL,
     STUDENT_BTN_PAY,
@@ -37,6 +38,7 @@ def parent_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=PARENT_BTN_RESULTS), KeyboardButton(text=PARENT_BTN_DEBT)],
+            [KeyboardButton(text=PARENT_BTN_PAY)],
             [KeyboardButton(text=PARENT_BTN_APPEAL)],
         ],
         resize_keyboard=True,
